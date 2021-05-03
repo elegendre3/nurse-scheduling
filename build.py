@@ -16,4 +16,5 @@ version = '0.0.dev1'
 
 @init
 def set_properties(project):
+    project.depends_on('pandas')
     project.depends_on('pulp')

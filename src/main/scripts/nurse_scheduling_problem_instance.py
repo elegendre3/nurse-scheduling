@@ -1,5 +1,7 @@
 from pulp import (LpMinimize, LpProblem, LpStatus, lpSum, LpVariable)
 
+from nurse_scheduling.visualization import (lp_output_to_dict, output_dict_to_weekly)
+
 
 ## Define problem
 prob = LpProblem("simpleScheduleProblem", LpMinimize)
@@ -123,3 +125,9 @@ print(f"Status: [{LpStatus[prob.status]}]")
 for v in prob.variables():
     if v.varValue > 0:
         print(v.name, "=", v.varValue)
+
+# Process into readable format
+out_df = output_dict_to_weekly(lp_output_to_dict(prob))
+print(out_df)
+for i in range(len(out_df)):
+    out_df[i].to_csv(f'schedule_[{i}].csv')
