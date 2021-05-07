@@ -3,47 +3,54 @@ from typing import (Dict, List, Tuple)
 import pandas as pd
 from pulp import LpProblem
 
+from nurse_scheduling.conf import (
+    all,
+    day_map,
+    shift_map,
+    floor_needs_per_shift,
+    num_days,
+    num_floors,
+    num_nurses,
+    num_shifts
+)
 
-def parse_var_name(var_name: str) -> Tuple[str, str, str]:
+
+def parse_var_name(var_name: str) -> Tuple[str, str, str, str]:
     """Parses "_"-combined-var into individual elements"""
     vars = var_name.split('_')
-    return vars[1], vars[2], vars[3]
+    return vars[1], vars[2], vars[3], vars[4]
+
+
+def _make_empty_schedule(all_data: dict):
+    sched = {}
+
+    for x in all_data.keys():
+        sched[x] = {"sched": [[0] * num_shifts] * num_days}
+
+    return sched
 
 
 def lp_output_to_dict(prob: LpProblem) -> Dict:
-    all = {
-        "a": {
-            "sched": [0, 0],  # len(sched) == num_shifts
-        },
-        "b": {
-            "sched": [0, 0],
-        },
-        "c": {
-            "sched": [0, 0],
-        },
-        "d": {
-            "sched": [0, 0],
-        }
-    }
+    sched = _make_empty_schedule(all)
 
     for v in prob.variables():
-        nurse, floor, shift = parse_var_name(v.name)
-        print(f'nurse [{nurse}], floor [{floor}], shift [{shift}]')
+        nurse, floor, day, shift = parse_var_name(v.name)
+        # print(f'nurse [{nurse}], day [{day}], floor [{floor}], shift [{shift}]')
         value = v.varValue
-        print(f'value [{value}]')
+        # print(f'value [{value}]')
 
         if value > 0:
-            all[nurse]['sched'][int(shift) - 1] = floor
+            sched[nurse]['sched'][day_map[day]][int(shift) - 1] = floor
 
-    print(all)
-    return all
+    # print(sched)
+    return sched
 
 
-def output_dict_to_weekly(all: Dict) -> List[pd.DataFrame]:
-    week_schedules = [{}]  # len() = num worked days
+def output_dict_to_weekly(schedule: Dict) -> List[pd.DataFrame]:
+    week_schedules = [{}] * num_days  # len() = num worked days
 
-    for nurse in all.keys():
-        for day_idx in range(len(week_schedules)):
-            week_schedules[day_idx][nurse] = all[nurse]['sched']
+    for nurse in schedule.keys():
+        for d_i in range(num_days):
+            week_schedules[d_i][nurse] = schedule[nurse]['sched'][d_i]
 
     return [pd.DataFrame(x) for x in week_schedules]

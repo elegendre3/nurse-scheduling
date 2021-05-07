@@ -1,72 +1,35 @@
 from pulp import (LpMinimize, LpProblem, LpStatus, lpSum, LpVariable)
 
 from nurse_scheduling.visualization import (lp_output_to_dict, output_dict_to_weekly)
+from nurse_scheduling.utils import deepflatten
+from nurse_scheduling.conf import (
+    all,
+    docs,
+    floor_needs_per_shift,
+    num_days,
+    num_floors,
+    num_nurses,
+    num_shifts
+)
 
-
-## Define problem
+# Define problem
 prob = LpProblem("simpleScheduleProblem", LpMinimize)
 
-## Define variables
-num_nurses = 4
-num_floors = 2
-num_shifts = 2
 
-floor_needs_per_shift = [[2, 1], [2, 1]]
-
-# Schema: [person]_[floor]_[shift]
-all = {
-    "a": {
-        "var": [['a_a_1', 'a_b_1'], ['a_a_2', 'a_b_2']],
-        "cost": [[1, 1], [1, 1]],
-    },
-    "b": {
-        "var": [['b_a_1', 'b_b_1'], ['b_a_2', 'b_b_2']],
-        "cost": [[2, 1], [2, 1]],  # expensive to be put on floor a
-    },
-    "c": {
-        "var": [['c_a_1', 'c_b_1'], ['c_a_2', 'c_b_2']],
-        "cost": [[3, 3], [1, 1]],  # expensive to work shift 1
-    },
-    "d": {
-        "var": [['d_a_1', 'd_b_1'], ['d_a_2', 'd_b_2']],
-        "cost": [[1, 1], [5, 5]],  # expensive to work shift 2
-    }
-}
-
-docs = {
-    "doc_1": {
-        "sched": [[1, 0], [1, 0]],  # floor a
-        "compat": [1, 1, 1, 0],  # incompatibility with nurse #4
-    },
-    "doc_2": {
-        "sched": [[1, 0], [1, 0]],  # floor a
-        "compat": [1, 1, 1, 1],
-    },
-    "doc_3": {
-        "sched": [[0, 1], [0, 0]],  # floor b only shift 1
-        "compat": [1, 1, 0, 1],  # incompatibility with nurse #3
-    },
-    "doc_4": {
-        "sched": [[0, 0], [0, 1]],  # floor b only shift 2
-        "compat": [1, 1, 0, 1],  # incompatibility with nurse #3
-    },
-    "doc_5": {
-        "sched": [[1, 0], [0, 0]],  # floor a only shift 1
-        "compat": [0, 1, 1, 0],  # incompatibility with nurse #1 and #4
-    }
-}
-
+# Define variables
 # Checks
 all_vars = []
 for x in all.keys():
     cur_vars = all[x]['var']
-    assert len(cur_vars) == num_shifts
-    assert len(cur_vars[0]) == num_floors
-    curr_vars_flat = [y for x in cur_vars for y in x]
-    assert len(curr_vars_flat) == num_floors * num_shifts
-    all_vars.extend(curr_vars_flat)
+    assert len(cur_vars) == num_days
+    assert len(cur_vars[0]) == num_shifts
+    assert len(cur_vars[0][0]) == num_floors
+    for d_idx in range(num_days):
+        day_flat = [y for x in cur_vars[d_idx] for y in x]
+        assert len(day_flat) == num_floors * num_shifts
+        all_vars.extend(day_flat)
 
-assert len(all_vars) == num_nurses * num_floors * num_floors
+assert len(all_vars) == num_nurses * num_days * num_floors * num_floors
 
 vars = LpVariable.dicts("var", all_vars, lowBound=0, upBound=1, cat='Integer')
 
@@ -75,8 +38,8 @@ vars = LpVariable.dicts("var", all_vars, lowBound=0, upBound=1, cat='Integer')
 cost_func = lpSum(
     [
         vars[v] * w for k in all.keys() for v, w in zip(
-            [y for x in all[k]["var"] for y in x],
-            [y for x in all[k]["cost"] for y in x]
+            [x for x in list(deepflatten(all[k]['var']))],
+            [y for y in list(deepflatten(all[k]['cost']))],
         )
     ]
 )
@@ -85,34 +48,43 @@ prob += cost_func
 ## Define Constraints
 
 # Enough staffing per floor
-for i, s_needs in enumerate(floor_needs_per_shift):
-    for j, f_needs in enumerate(s_needs):
-        floor_x_y = lpSum([vars[all[k]["var"][i][j]] for k in all.keys()]) >= f_needs
-        prob += floor_x_y
+
+for h, d_needs in enumerate(floor_needs_per_shift):
+    for i, s_needs in enumerate(d_needs):
+        for j, f_needs in enumerate(s_needs):
+            floor_x_y = lpSum([vars[all[k]["var"][h][i][j]] for k in all.keys()]) >= f_needs
+            prob += floor_x_y
 
 # Personal
 n_idx = 0
 for nurse in all.keys():
-    # Max Day
-    day_max = lpSum([vars[y] for x in all[nurse]['var'] for y in x]) <= 2.0
-    prob += day_max
+    # Max Week  - half the total shifts # 36 hrs/week max w. 2 shifts of 6 hrs/day available
+    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) <= float(num_days * num_shifts) * (1/2)
+    prob += week_max
 
-    # Can't be in more than 1 place
-    for s_i in range(num_shifts):
-        unicity = lpSum([vars[x] for x in all[nurse]['var'][s_i]]) <= 1.0
-        prob += unicity
+    # Avoid 2-shift days as much as possible
+    # todo
 
-    # Incompatibilities
-    for doc in docs.keys():
-        if docs[doc]['compat'][n_idx] == 0:  # if incompat
-            nurse_doc_constraint_expr = []
-            for s_idx in range(num_shifts):  # iterate schedule (shift)
-                for f_idx in range(num_floors):  # iterate schedule (floor)
-                    if docs[doc]['sched'][s_idx][f_idx] == 1:  # check presence
-                        nurse_doc_constraint_expr.append(vars[all[nurse]['var'][s_idx][f_idx]])
-            if len(nurse_doc_constraint_expr) > 0:  # check for constraints
-                nurse_doc_constraint = lpSum(list(set(nurse_doc_constraint_expr))) <= 0
-                prob += nurse_doc_constraint
+    # Max Day - set to 2 now which is current max (could be used to strictly avoid 8am-8pm days)
+    for d_i in range(num_days):
+        day_max = lpSum([vars[y] for x in all[nurse]['var'][d_i] for y in x]) <= 2.0
+        prob += day_max
+
+        # Can't be in more than 1 place
+        for s_i in range(num_shifts):
+            unicity = lpSum([vars[x] for x in all[nurse]['var'][d_i][s_i]]) <= 1.0
+            prob += unicity
+
+            # Incompatibilities
+            for doc in docs.keys():
+                if docs[doc]['compat'][n_idx] == 0:  # if incompat
+                    nurse_doc_constraint_expr = []
+                    for f_idx in range(num_floors):  # iterate schedule (floor)
+                        if docs[doc]['sched'][d_i][s_i][f_idx] == 1:  # check presence
+                            nurse_doc_constraint_expr.append(vars[all[nurse]['var'][d_i][s_i][f_idx]])
+                    if len(nurse_doc_constraint_expr) > 0:  # check for constraints
+                        nurse_doc_constraint = lpSum(list(set(nurse_doc_constraint_expr))) <= 0
+                        prob += nurse_doc_constraint
 
     n_idx += 1  # Note: this works because all.keys() keeps the order that it was defined in...
 
@@ -120,14 +92,17 @@ for nurse in all.keys():
 # Solve
 prob.solve()
 print(f"Status: [{LpStatus[prob.status]}]")
+print()
 
-# Show solution
-for v in prob.variables():
-    if v.varValue > 0:
-        print(v.name, "=", v.varValue)
+if prob.status != -1:
+    # Show solution
+    for v in prob.variables():
+        if v.varValue > 0:
+            print(v.name, "=", v.varValue)
 
-# Process into readable format
-out_df = output_dict_to_weekly(lp_output_to_dict(prob))
-print(out_df)
-for i in range(len(out_df)):
-    out_df[i].to_csv(f'schedule_[{i}].csv', index=False)
+    # Process into readable format
+    out_df = output_dict_to_weekly(lp_output_to_dict(prob))
+    for i in range(len(out_df)):
+        print(out_df[i])
+        print()
+        out_df[i].to_csv(f'schedule_[{i}].csv', index=False)
