@@ -130,4 +130,4 @@ for v in prob.variables():
 out_df = output_dict_to_weekly(lp_output_to_dict(prob))
 print(out_df)
 for i in range(len(out_df)):
-    out_df[i].to_csv(f'schedule_[{i}].csv')
+    out_df[i].to_csv(f'schedule_[{i}].csv', index=False)
