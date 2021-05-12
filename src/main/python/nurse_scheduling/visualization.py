@@ -11,7 +11,9 @@ from nurse_scheduling.conf import (
     num_days,
     num_floors,
     num_nurses,
-    num_shifts
+    num_shifts,
+    nurse_names,
+    shift_names
 )
 
 
@@ -53,4 +55,4 @@ def output_dict_to_weekly(schedule: Dict) -> List[pd.DataFrame]:
         for d_i in range(num_days):
             week_schedules[d_i][nurse] = schedule[nurse]['sched'][d_i]
 
-    return [pd.DataFrame(x) for x in week_schedules]
+    return [pd.DataFrame(x).rename(index=shift_names, columns=nurse_names) for x in week_schedules]
