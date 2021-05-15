@@ -3,6 +3,8 @@ from pathlib import Path
 import pandas as pd
 from IPython.display import (display, HTML)
 
+from nurse_scheduling.conf import shift_names
+
 
 def example():
     # creating the dataframe
@@ -21,6 +23,25 @@ def example():
 
 def csv_to_html(source_path: Path, target_path: Path):
     df = pd.read_csv(source_path)
+    df.insert(0, 'Shifts', [x[1] for x in shift_names.items()])
+
+    beg_marker = """<table border="1" class="dataframe styled-table">"""
+    style = """
+                <caption>Schedule Turin</caption>
+                <colgroup>
+                    <col class="grey" />
+                    <col class="red" />
+                    <col class="blue" />
+                    <col class="pink" />
+                    <col class="yellow" />
+                    <col class="green" />
+                    <col class="purple" />
+                    <col class="red" />
+                    <col class="blue" />
+                    <col class="pink" />
+                    <col class="yellow" />
+                </colgroup>"""
+
     page = """<!DOCTYPE html>
 <html lang="en" class="h-100">
   <head>
@@ -57,7 +78,11 @@ def csv_to_html(source_path: Path, target_path: Path):
         </div>
     </body>
 </html>"""
-    page_html = page.replace("{SCHEDULE_HERE}", df.to_html(classes='styled-table'))
+    page_html = page.replace("{SCHEDULE_HERE}", df.to_html(index=False, classes='styled-table'))
+
+    beg_idx = page_html.find(beg_marker) + len(beg_marker)  #+ len("""\n              """)
+
+    page_html = page_html[:beg_idx] + style + page_html[beg_idx:]
 
     with target_path.open('w') as f:
         f.write(page_html)
