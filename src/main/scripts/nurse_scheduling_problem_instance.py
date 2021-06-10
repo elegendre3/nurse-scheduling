@@ -1,15 +1,19 @@
+from pathlib import Path
 from pulp import (LpMinimize, LpProblem, LpStatus, lpSum, LpVariable)
 
-from nurse_scheduling.visualization import (lp_output_to_dict, output_dict_to_weekly)
+from nurse_scheduling.display import csv_to_html
 from nurse_scheduling.utils import deepflatten
+from nurse_scheduling.visualization import (lp_output_to_dict, output_dict_to_weekly)
 from nurse_scheduling.conf import (
     all,
     docs,
-    floor_needs_per_shift,
+    floor_needs,
     num_days,
     num_floors,
     num_nurses,
-    num_shifts
+    num_shifts,
+    nurses_names,
+    var_name_tplt
 )
 
 # Define problem
@@ -19,17 +23,26 @@ prob = LpProblem("simpleScheduleProblem", LpMinimize)
 # Define variables
 # Checks
 all_vars = []
-for x in all.keys():
-    cur_vars = all[x]['var']
-    assert len(cur_vars) == num_days
-    assert len(cur_vars[0]) == num_shifts
-    assert len(cur_vars[0][0]) == num_floors
+for n_name in nurses_names:
+    nurse_vars = []
     for d_idx in range(num_days):
-        day_flat = [y for x in cur_vars[d_idx] for y in x]
-        assert len(day_flat) == num_floors * num_shifts
-        all_vars.extend(day_flat)
+        day = []
+        for s_idx in range(num_shifts):
+            shift = []
+            for f_idx in range(num_floors):
+                my_var = var_name_tplt % (n_name, d_idx, s_idx, f_idx)
+                shift.append(my_var)
+                all_vars.append(my_var)
+            day.append(shift)
+        nurse_vars.append(day)
+    all[n_name]["var"] = nurse_vars
 
-assert len(all_vars) == num_nurses * num_days * num_floors * num_floors
+assert len(all_vars) == num_nurses * num_days * num_floors * num_shifts
+nurses = list(all.keys())
+assert len(nurses) == num_nurses
+assert len(all[nurses[0]]["var"]) == num_days == len(all[nurses[0]]["cost"])
+assert len(all[nurses[0]]["var"][0]) == num_shifts == len(all[nurses[0]]["cost"][0])
+assert len(all[nurses[0]]["var"][0][0]) == num_floors == len(all[nurses[0]]["cost"][0][0])
 
 vars = LpVariable.dicts("var", all_vars, lowBound=0, upBound=1, cat='Integer')
 
@@ -49,17 +62,17 @@ prob += cost_func
 
 # Enough staffing per floor
 
-for h, d_needs in enumerate(floor_needs_per_shift):
-    for i, s_needs in enumerate(d_needs):
-        for j, f_needs in enumerate(s_needs):
-            floor_x_y = lpSum([vars[all[k]["var"][h][i][j]] for k in all.keys()]) >= f_needs
+for d_idx in range(num_days):
+    for s_idx in range(num_shifts):
+        for f_idx in range(num_floors):
+            floor_x_y = lpSum([vars[all[k]["var"][d_idx][s_idx][f_idx]] for k in all.keys()]) >= floor_needs[f_idx][s_idx]
             prob += floor_x_y
 
 # Personal
 n_idx = 0
 for nurse in all.keys():
     # Max Week  - half the total shifts # 36 hrs/week max w. 2 shifts of 6 hrs/day available
-    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) <= float(num_days * num_shifts) * (1/2)
+    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) <= 35  # float(num_days * num_shifts) * (1/2)
     prob += week_max
 
     # Avoid 2-shift days as much as possible
@@ -67,7 +80,7 @@ for nurse in all.keys():
 
     # Max Day - set to 2 now which is current max (could be used to strictly avoid 8am-8pm days)
     for d_i in range(num_days):
-        day_max = lpSum([vars[y] for x in all[nurse]['var'][d_i] for y in x]) <= 2.0
+        day_max = lpSum([vars[y] for x in all[nurse]['var'][d_i] for y in x]) <= num_shifts
         prob += day_max
 
         # Can't be in more than 1 place
@@ -106,3 +119,7 @@ if prob.status != -1:
         print(out_df[i])
         print()
         out_df[i].to_csv(f'schedule_[{i}].csv', index=False)
+
+s_path = Path('schedule_[0].csv')
+t_path = Path('test.html')
+csv_to_html(s_path, t_path)
