@@ -17,7 +17,7 @@ def parse_var_name(var_name: str) -> Tuple[str, int, int, int]:
     """Parses "_"-combined-var into individual elements"""
     # print(f"raw var name: [{var_name}]")
     vars = var_name.split('_')
-    if "ceil" in vars[0].lower() or "floor" in vars[0].lower() or "empty" in vars[0].lower():
+    if "ceil" in vars[0].lower() or "floor" in vars[0].lower() or "empty" in vars[0].lower() or "day" in vars[0].lower():
         raise ValueError("Not a Schedule Variable")
     else:
         return vars[1], int(vars[2]), int(vars[3]), int(vars[4])

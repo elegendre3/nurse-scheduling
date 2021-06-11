@@ -10,6 +10,7 @@ from nurse_scheduling.conf_smaller import (
     all,
     docs,
     floor_needs,
+    long_day_costs,
     num_days,
     num_floors,
     num_nurses,
@@ -67,11 +68,12 @@ for d_idx in range(num_days):
 n_idx = 0
 for nurse in all.keys():
     # Max Week  - half the total shifts # 36 hrs/week max w. 2 shifts of 6 hrs/day available
-    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) <= float(num_days * 12.0)  # float(num_days * num_shifts) * (1/2)
+    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) <= float(num_days * 10.0)  # float(num_days * num_shifts) * (1/2)
     consts.append(week_max)
 
-    # Avoid full days as much as possible
-    # todo
+    # Min Week
+    week_max = lpSum([vars[x] for x in deepflatten(all[nurse]['var'])]) >= float(num_days * 6.5)  # float(num_days * num_shifts) * (1/2)
+    consts.append(week_max)
 
     for d_idx in range(num_days):
         # Max Day - (could be used to strictly avoid 8am-8pm days)
@@ -82,18 +84,31 @@ for nurse in all.keys():
         day_min = lpSum([vars[y] for x in all[nurse]['var'][d_idx] for y in x]) >= float(6.0)
         consts.append(day_min)
 
-        # Prefer balanced week over few big days
-        day = deepflatten(all[nurse]['var'][d_idx])
-        day_sum = lpSum([vars[x] for x in day])
-        day_ceil_var = LpVariable(
-            f'nonEmptyDay_{nurse}_{d_idx}',
-            lowBound=0,
-            upBound=1,
-            cat='Integer'
-        )
-        day_ceil_const = day_ceil_var <= 0.9 + (day_sum / 2)  # day_sum = 0 -> 0 | day_sum > 0 -> = 1
-        consts.append(day_ceil_const)
-        continuity_vars.append(10 * (1 - day_ceil_var))  # expensive to have empty days
+        # Avoid long days
+        for long_day_i in range(6):
+            # 820Var (Bounded Int) >= (var_i_j_0_X + var_i_j_11_X) / 2.0 -> Weight 50
+            # 819Var (Bounded Int) >= (var_i_j_0_X + var_i_j_10_X) / 2.0 -> Weight 40
+            # 818Var (Bounded Int) >= (var_i_j_0_X + var_i_j_9_X) / 2.0 -> Weight 12
+            # 817Var (Bounded Int) >= (var_i_j_0_X + var_i_j_8_X) / 2.0 -> Weight 10
+
+            # 920Var  (Bounded Int) >= (var_i_j_0_X + var_i_j_11_X) / 2.0 -> Weight 20
+            # 1020Var (Bounded Int) >= (var_i_j_1_X + var_i_j_11_X) / 2.0 -> Weight 15
+            # 1120Var (Bounded Int) >= (var_i_j_2_X + var_i_j_11_X) / 2.0 -> Weight 12
+            # 1220Var (Bounded Int) >= (var_i_j_3_X + var_i_j_11_X) / 2.0 -> Weight 10
+
+            longmorning_var = LpVariable(f'dayLongMorning_{nurse}_{d_idx}_{long_day_i}', lowBound=0, upBound=1, cat='Integer')
+            longmorning_const = longmorning_var >= (lpSum(
+                [vars[x] for x in all[nurse]['var'][d_idx][0]] + [vars[x] for x in all[nurse]['var'][d_idx][num_shifts-1-long_day_i]]
+            ) / 2) - 0.5
+            consts.append(longmorning_const)
+            continuity_vars.append(long_day_costs[long_day_i] * longmorning_const)
+
+            longafternoon_var = LpVariable(f'dayLongAft_{nurse}_{d_idx}_{long_day_i}', lowBound=0, upBound=1, cat='Integer')
+            longafternoon_const = longafternoon_var >= (lpSum(
+                [vars[x] for x in all[nurse]['var'][d_idx][long_day_i]] + [vars[x] for x in all[nurse]['var'][d_idx][num_shifts - 1]]
+            ) / 2) - 0.5
+            consts.append(longafternoon_const)
+            continuity_vars.append(long_day_costs[long_day_i] * longafternoon_const)
 
         # Per Shift
         for s_idx in range(num_shifts):
@@ -111,58 +126,6 @@ for nurse in all.keys():
                     if len(nurse_doc_constraint_expr) > 0:  # check for constraints
                         nurse_doc_constraint = lpSum(list(set(nurse_doc_constraint_expr))) <= 0
                         consts.append(nurse_doc_constraint)
-
-    # Continuity | avoid 8-9 + 11-12 + 14-18
-    # foreach nurse, day, floor:
-    # foreach shift except 0 and -1:
-    # var >= floor((ceil(sum(vars_before)/num_shifts) + ceil(sum(vars_after)/num_shifts))/2)
-    # vars before shift s => same nurse, day, floor, but [0:s]
-    # vars after  shift s => same nurse, day, floor, but [s+1:]
-            if s_idx in [0, num_shifts - 1]:
-                # Skipping first and last
-                pass
-            else:
-                # Looking at previous shifts
-                before_name = f'BeforeCeil_{nurse}_{d_idx}_{s_idx}'
-                before = deepflatten([all[nurse]['var'][d_idx][s] for s in range(s_idx)])
-                before_sum = lpSum([vars[x] for x in before])
-                before_ceil_var = LpVariable(
-                    before_name,
-                    lowBound=0,
-                    upBound=1,
-                    cat='Integer'
-                )
-                before_ceil_const = before_ceil_var >= before_sum / (num_floors * num_shifts)
-                consts.append(before_ceil_const)
-
-                # Looking at next shifts
-                after_name = f'AfterCeil_{nurse}_{d_idx}_{s_idx}'
-                after = deepflatten([all[nurse]['var'][d_idx][s] for s in range(s_idx + 1, num_shifts)])
-                after_sum = lpSum([vars[x] for x in after])
-                after_ceil_var = LpVariable(
-                    after_name,
-                    lowBound=0,
-                    upBound=1,
-                    cat='Integer'
-                )
-                after_ceil_const = after_ceil_var >= after_sum / (num_floors * num_shifts)
-                consts.append(after_ceil_const)
-
-                # Enforcing continuity  - BY OBJECTIVE
-                sum_mathfloor_var = LpVariable(
-                    f'SumFloor_{nurse}_{d_idx}_{s_idx}',
-                    lowBound=0,
-                    upBound=1,
-                    cat='Integer'
-                )
-                sum_mathfloor_const = sum_mathfloor_var >= (before_ceil_var + after_ceil_var) / 2.0
-                consts.append(sum_mathfloor_const)
-                continuity_vars.append(sum_mathfloor_var)  # will not make it 1 unless has to  | soft constraint
-
-                cont_const = lpSum(vars[all[nurse]['var'][d_idx][s_idx][f_idx]] for f_idx in range(num_floors)) >= sum_mathfloor_var
-                consts.append(cont_const)
-
-                # Something makes PAM! do ADMIN at the end of the 2nd day.. it shouldnt
 
     n_idx += 1  # Note: this works because all.keys() keeps the order that it was defined in...
 
@@ -182,7 +145,8 @@ for c in consts:
 
 
 # Solve
-prob.solve(pulp.PULP_CBC_CMD(maxSeconds=20, msg=True, fracGap=0))
+# prob.solve(pulp.PULP_CBC_CMD(maxSeconds=20, msg=True, fracGap=0))
+prob.solve()
 print(f"Status: [{LpStatus[prob.status]}]")
 print()
 
