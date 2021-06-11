@@ -57,12 +57,13 @@ continuity_vars = []
 
 for d_idx in range(num_days):
     for s_idx in range(num_shifts):
-        for f_idx in range(num_floors - 1):
-            floor_x_y = lpSum([vars[all[k]["var"][d_idx][s_idx][f_idx]] for k in all.keys()]) == floor_needs[f_idx][s_idx]
-            consts.append(floor_x_y)
-        # Last floor is Admin
-        floor_x_y = lpSum([vars[all[k]["var"][d_idx][s_idx][num_floors - 1]] for k in all.keys()]) >= 0
-        consts.append(floor_x_y)
+        for f_idx in range(num_floors):
+            if f_idx == 2:  # admin
+                floor_x_y = lpSum([vars[all[k]["var"][d_idx][s_idx][num_floors - 1]] for k in all.keys()]) >= 0
+                consts.append(floor_x_y)
+            else:
+                floor_x_y = lpSum([vars[all[k]["var"][d_idx][s_idx][f_idx]] for k in all.keys()]) == floor_needs[f_idx][s_idx]
+                consts.append(floor_x_y)
 
 # Personal
 n_idx = 0
